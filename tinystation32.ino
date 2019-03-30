@@ -106,52 +106,52 @@ void drawFrame5(OLEDDisplay *display, OLEDDisplayUiState* state, int16_t x, int1
 
 #if USE_CO2
 
-#include "MHZ.h"
+#include "MHZ19.h"
 
-#define CO2_IN 10
-#define MH_Z19_RX D8
-#define MH_Z19_TX D7
-
-MHZ co2(MH_Z19_RX, MH_Z19_TX, CO2_IN, MHZ19B);
+#define RX0 3
+#define TX0 1
+MHZ19 mhz19;
 
 // MH-Z19B CO2 Sensor
 void drawCO2(OLEDDisplay *display, OLEDDisplayUiState* state, int16_t x, int16_t y) {
-  static int last_ppm_uart = -1;
+  static int initialized = 0;
+  static unsigned long warmup_millis = 0;
   static unsigned long last_millis = 0;
-  static int is_preheating = 1;
-  static char s[3][100] = { "Initializing...", "", "" };
-  int ppm_uart, temparature;
+  static char s[2][64];
+  
+  if (!initialized) {
+    Serial.begin(9600);
+    mhz19.begin(Serial);
+    mhz19.autoCalibration();
+    warmup_millis = millis() + 30 * 1000;
+    initialized = 1;
+  }
 
-  if (millis() >= last_millis + 1000) {
-    if (co2.isPreHeating()) {
-      sprintf(s[0], "Preheating...");
-      is_preheating = 1;
-    }
-    else {
-      ppm_uart = co2.readCO2UART();
-      temparature = co2.getLastTemperature();
-      if (ppm_uart < 0) {
-        ppm_uart = last_ppm_uart;
-      } else {
-        last_ppm_uart = ppm_uart;
-      }
-      sprintf(s[1], "CO2: %d", ppm_uart);
-      sprintf(s[2], "TEMP: %d C", temparature);
-      is_preheating = 0;
-    }
+  if (millis() < warmup_millis) {
+    last_millis = millis();
+    int rm = warmup_millis - last_millis;
+    sprintf(s[0], "CO2 Starting...");
+    sprintf(s[1], "remains %d secs", rm / 1000);
+    display->setTextAlignment(TEXT_ALIGN_CENTER);
+    display->setFont(ArialMT_Plain_16);
+    display->drawString(64 + x, 14 + y, s[0]);
+    display->setFont(ArialMT_Plain_10);
+    display->drawString(64 + x, 36 + y, s[1]);
+    return;
+  }
+
+  if (millis() >= last_millis + 2000) {
+    int co2 = mhz19.getCO2();
+    int8_t temp = mhz19.getTemperature();
+    sprintf(s[0], "CO2: %d", co2);
+    sprintf(s[1], "TEMP: %d C", temp);
     last_millis = millis();
   }
 
-  if (is_preheating) {
-    nfd.setFont(Helvetica_18, NewPinetree_18);
-    nfd.drawStringMaxWidth(display, 64 + x, 22 + y, nfd.TEXT_ALIGN_CENTER, 128, s[0]);    
-  }
-  else {
-    nfd.setFont(Helvetica_Bold_24, NewPinetree_Bold_24);
-    nfd.drawStringMaxWidth(display, 64 + x, 10 + y, nfd.TEXT_ALIGN_CENTER, 128, s[1]);
-    nfd.setFont(Helvetica_Bold_14, NewPinetree_Bold_14);
-    nfd.drawStringMaxWidth(display, 64 + x, 38 + y, nfd.TEXT_ALIGN_CENTER, 128, s[2]);
-  }
+  display->setFont(ArialMT_Plain_16);
+  display->setTextAlignment(TEXT_ALIGN_CENTER);
+  display->drawString(64 + x, 14 + y, s[0]);
+  display->drawString(64 + x, 36 + y, s[1]);
 }
 #endif
 
@@ -160,18 +160,46 @@ void drawCO2(OLEDDisplay *display, OLEDDisplayUiState* state, int16_t x, int16_t
 
 #include "PMS.h"
 
-#define PMS_RESET D5
-#define PMS_SET   D6
-
-PMS pms(Serial);
+#define PMS_RESET 14
+#define PMS_SET   12
+#define TX1 13
+#define RX1 15
+HardwareSerial pmsSerial1(1);
+PMS pms(pmsSerial1);
 
 // PLANTOWER PM2.5 PMS7003 / G7 PMS Sensor
 void drawPMS(OLEDDisplay *display, OLEDDisplayUiState* state, int16_t x, int16_t y) {
+  static int initialized = 0;
+  static unsigned long warmup_millis = 0;
   static unsigned long last_millis = 0;
-  static char s[3][100] = { "", "Initializing...", "" };
-  int ppm_uart, temparature;
+  static char s[3][100];
   PMS::DATA data;
 
+  if (!initialized) {
+    pinMode(PMS_RESET, OUTPUT);
+    pinMode(PMS_SET, OUTPUT);
+    digitalWrite(PMS_RESET, HIGH);
+    digitalWrite(PMS_SET, HIGH);
+    pmsSerial1.begin(9600, SERIAL_8N1, RX1, TX1);
+    pms.passiveMode();
+    pms.wakeUp();
+    warmup_millis = millis() + 30 * 1000;
+    initialized = 1;
+  }
+
+  if (millis() < warmup_millis) {
+    last_millis = millis();
+    int rm = warmup_millis - last_millis;
+    sprintf(s[0], "PMS Starting...");
+    sprintf(s[1], "remains %d secs", rm / 1000);
+    display->setTextAlignment(TEXT_ALIGN_CENTER);
+    display->setFont(ArialMT_Plain_16);
+    display->drawString(64 + x, 14 + y, s[0]);
+    display->setFont(ArialMT_Plain_10);
+    display->drawString(64 + x, 36 + y, s[1]);
+    return;
+  }
+  
   if (millis() >= last_millis + 1000) {
     pms.requestRead();
     if (pms.readUntil(data)) {
@@ -182,11 +210,12 @@ void drawPMS(OLEDDisplay *display, OLEDDisplayUiState* state, int16_t x, int16_t
     }
     last_millis = millis();
   }
-  
-  nfd.setFont(Helvetica_Bold_18, NewPinetree_Bold_18);
-  nfd.drawStringMaxWidth(display, 64 + x, 2 + y, nfd.TEXT_ALIGN_CENTER, 128, s[0]);
-  nfd.drawStringMaxWidth(display, 64 + x, 23 + y, nfd.TEXT_ALIGN_CENTER, 128, s[1]);
-  nfd.drawStringMaxWidth(display, 64 + x, 44 + y, nfd.TEXT_ALIGN_CENTER, 128, s[2]);
+  display->setFont(ArialMT_Plain_16);
+  display->setTextAlignment(TEXT_ALIGN_CENTER);
+  display->drawString(64 + x, 11 + y, s[0]);
+  display->drawString(64 + x, 25 + y, s[1]);
+  display->drawString(64 + x, 39 + y, s[2]);
+ 
 }
 
 #endif
@@ -195,9 +224,8 @@ void drawPMS(OLEDDisplay *display, OLEDDisplayUiState* state, int16_t x, int16_t
 // This array keeps function pointers to all frames
 // frames are the single views that slide in
 //FrameCallback frames[] = { drawFrame1, drawFrame2, drawFrame3, drawFrame4, drawFrame5 };
-//int frameCount = 5;
-FrameCallback frames[] = { drawCO2, drawPMS };
-int frameCount = 2;
+FrameCallback frames[] = { drawFrame1, drawCO2, drawPMS };
+int frameCount = 3;
 
 // Overlays are statically drawn on top of a frame eg. a clock
 OverlayCallback overlays[] = { msOverlay };
@@ -205,24 +233,19 @@ int overlaysCount = 0;
 
 
 void setup() {
-  //Serial.begin(115200);
-  //Serial.println();
-  //Serial.println();
 
-#if USE_PMS
-  Serial.begin(9600);
+#if PMS
+  // init as disabled status for startup power short
   pinMode(PMS_RESET, OUTPUT);
   pinMode(PMS_SET, OUTPUT);
-  digitalWrite(PMS_RESET, HIGH);
-  digitalWrite(PMS_SET, HIGH);
-  pms.passiveMode();  
-  pms.wakeUp();
+  digitalWrite(PMS_RESET, LOW);
+  digitalWrite(PMS_SET, LOW);
 #endif
-
+    
 	// The ESP is capable of rendering 60fps in 80Mhz mode
 	// but that won't give you much time for anything else
 	// run it in 160Mhz mode or just set it to 30 fps
-  ui.setTargetFPS(15);
+  ui.setTargetFPS(30);
 
 	// Customize the active and inactive symbol
   ui.setActiveSymbol(activeSymbol);
